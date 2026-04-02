@@ -74,3 +74,36 @@ def test_extract_regions(tmp_path):
     assert {"us-east-1", "us-west-2", "us-gov-west-1"} == {r["region_name"] for r in rows}
     gov = [r for r in rows if r["region_name"] == "us-gov-west-1"][0]
     assert gov["partition"] == "aws-us-gov"
+
+
+def test_write_parquet(tmp_path):
+    botocore_path = make_botocore_fixture(tmp_path)
+    from src.ingest import extract_operations, extract_waiters, extract_regions, write_parquet
+    import json
+    operations = extract_operations(botocore_path)
+    waiters = extract_waiters(botocore_path)
+    # Make a fake endpoints.json
+    ep = {"partitions": [{"partition": "aws", "regions": {"us-east-1": {}}}]}
+    ep_path = botocore_path / "data" / "endpoints.json"
+    with open(ep_path, "w") as f:
+        json.dump(ep, f)
+    regions = extract_regions(botocore_path)
+
+    output_dir = tmp_path / "output"
+    write_parquet(
+        operations=operations,
+        waiters=waiters,
+        regions=regions,
+        output_dir=output_dir,
+        effective_date="2026-04-01",
+    )
+
+    partition_dir = output_dir / "dam_effective_date=2026-04-01"
+    assert (partition_dir / "operations.parquet").exists()
+    assert (partition_dir / "regions.parquet").exists()
+
+    # Verify we can read it back with DuckDB
+    import duckdb
+    con = duckdb.connect()
+    result = con.execute(f"SELECT COUNT(*) FROM '{partition_dir}/operations.parquet'").fetchone()
+    assert result[0] == 3  # 2 s3 ops + 1 sts op

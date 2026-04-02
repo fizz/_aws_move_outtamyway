@@ -11,6 +11,109 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def write_parquet(
+    operations: list[dict],
+    waiters: list[dict],
+    regions: list[dict],
+    output_dir: Path,
+    effective_date: str,
+) -> Path:
+    """Write extracted data to partitioned parquet files."""
+    import duckdb
+
+    partition_dir = output_dir / f"dam_effective_date={effective_date}"
+    partition_dir.mkdir(parents=True, exist_ok=True)
+
+    con = duckdb.connect()
+
+    def _write(rows: list[dict], filename: str) -> None:
+        if not rows:
+            return
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(rows, f)
+            tmp_name = f.name
+        try:
+            con.read_json(tmp_name).write_parquet(str(partition_dir / filename))
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+
+    _write(operations, "operations.parquet")
+    _write(waiters, "waiters.parquet")
+    _write(regions, "regions.parquet")
+
+    con.close()
+    return partition_dir
+
+
+def clone_repo(url: str, branch: str, dest: Path) -> str:
+    """Shallow clone a git repo and return the HEAD commit SHA."""
+    # Suppress VS Code's GIT_ASKPASS injection which breaks unauthenticated HTTPS clones
+    env = os.environ.copy()
+    env.pop("GIT_ASKPASS", None)
+    env.pop("VSCODE_GIT_ASKPASS_MAIN", None)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    subprocess.run(
+        ["git", "clone", "--depth=1", f"--branch={branch}", url, str(dest)],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+    result = subprocess.run(
+        ["git", "-C", str(dest), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Ingest AWS API contract into datalake")
+    parser.add_argument("--output", type=Path, default=Path("datalake/aws_api_catalog"))
+    args = parser.parse_args()
+
+    effective_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    customs_path = Path(__file__).parent.parent / "cli_customs.json"
+    with open(customs_path) as f:
+        customs = json.load(f)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+
+        # Clone botocore
+        botocore_dest = tmp_path / "botocore"
+        print("Cloning boto/botocore...")
+        botocore_ref = clone_repo("https://github.com/boto/botocore.git", "develop", botocore_dest)
+        print(f"  ref: {botocore_ref}")
+
+        # Extract
+        print("Extracting operations...")
+        operations = extract_operations(botocore_dest, gitref=botocore_ref)
+        operations = merge_cli_customs(operations, customs)
+        print(f"  {len(operations)} operations ({len([r for r in operations if r['is_cli_custom']])} CLI customs)")
+
+        print("Extracting waiters...")
+        waiters = extract_waiters(botocore_dest, gitref=botocore_ref)
+        print(f"  {len(waiters)} waiters")
+
+        print("Extracting regions...")
+        regions = extract_regions(botocore_dest)
+        print(f"  {len(regions)} regions")
+
+        # Write
+        print(f"Writing parquet to {args.output}/dam_effective_date={effective_date}/")
+        write_parquet(
+            operations=operations,
+            waiters=waiters,
+            regions=regions,
+            output_dir=args.output,
+            effective_date=effective_date,
+        )
+        print("Done.")
+
+
 def extract_operations(botocore_path: Path, gitref: str = "unknown") -> list[dict]:
     """Extract service names and operation names from botocore data directory.
 
@@ -125,3 +228,7 @@ def extract_regions(botocore_path: Path) -> list[dict]:
                 "partition": partition_name,
             })
     return rows
+
+
+if __name__ == "__main__":
+    main()
