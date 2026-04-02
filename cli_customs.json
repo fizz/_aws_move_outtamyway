@@ -1,0 +1,8 @@
+{
+  "s3": ["cp", "ls", "mb", "mv", "presign", "rb", "rm", "sync", "website"],
+  "configure": ["set", "get", "list", "import", "export-credentials", "sso", "sso-session", "wizard"],
+  "history": ["show", "list"],
+  "deploy": ["push", "create", "list"],
+  "s3api": [],
+  "logs": ["tail"]
+}
