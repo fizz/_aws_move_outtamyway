@@ -154,25 +154,67 @@ def extract_operations(botocore_path: Path, gitref: str = "unknown") -> list[dic
 
 
 def merge_cli_customs(operations: list[dict], customs: dict) -> list[dict]:
-    """Merge CLI-only custom subcommands into the operations list.
+    """Merge CLI-only custom subcommands and aliases into the operations list.
+
+    Handles three cases:
+    1. _aliases (e.g. s3api -> s3): duplicates botocore ops under the alias name
+       and removes them from the original service (so s3 keeps only CLI customs).
+    2. Services with subcommands (e.g. s3, configure): adds them as is_cli_custom.
+    3. Pure CLI services with no subcommands (e.g. login): adds a placeholder entry
+       so the service appears in the service list.
 
     Args:
         operations: list of dicts from extract_operations
-        customs: dict mapping service name -> list of custom subcommand strings
+        customs: dict mapping service name -> list of custom subcommand strings,
+                 plus optional _aliases key mapping CLI names to botocore dirs
 
     Returns:
-        Combined list; custom entries have is_cli_custom=True.
+        Combined list with aliases resolved and customs merged.
     """
-    result = list(operations)
+    aliases = customs.get("_aliases", {})
+    # Collect the set of botocore service names that are aliased away
+    aliased_sources = set(aliases.values())
+
+    result = []
+
+    # Pass 1: copy botocore operations, skipping those claimed by aliases
+    for row in operations:
+        if row["service_name"] in aliased_sources:
+            continue
+        result.append(dict(row))
+
+    # Pass 2: for each alias, duplicate botocore ops under the alias name
+    for alias_name, botocore_name in aliases.items():
+        for row in operations:
+            if row["service_name"] == botocore_name:
+                aliased = dict(row)
+                aliased["service_name"] = alias_name
+                result.append(aliased)
+
+    # Pass 3: add CLI custom subcommands
     for service_name, subcommands in customs.items():
-        for subcommand in subcommands:
+        if service_name == "_aliases":
+            continue
+        if subcommands:
+            for subcommand in subcommands:
+                result.append({
+                    "service_name": service_name,
+                    "operation_name": subcommand,
+                    "is_cli_custom": True,
+                    "dam_file_path": None,
+                    "dam_gitref": None,
+                })
+        else:
+            # Pure CLI command with no subcommands — add placeholder so the
+            # service appears in the service list
             result.append({
                 "service_name": service_name,
-                "operation_name": subcommand,
+                "operation_name": service_name,
                 "is_cli_custom": True,
                 "dam_file_path": None,
                 "dam_gitref": None,
             })
+
     return result
 
 
