@@ -87,3 +87,29 @@ def test_emit_zsh(tmp_path):
     assert output.strip().endswith('_aws_move_outtamyway "$@"')
     # Must have wait subcommand for services with waiters
     assert "wait" in output
+
+
+def test_emit_bash(tmp_path):
+    datalake = make_test_datalake(tmp_path)
+    from src.generate import load_catalog, emit_bash
+    catalog = load_catalog(datalake)
+    output = emit_bash(catalog)
+
+    # Must contain function definition
+    assert "_aws_move_outtamyway()" in output
+    # Must contain complete registration
+    assert "complete -F _aws_move_outtamyway aws" in output
+    # Must contain services
+    assert "s3" in output
+    assert "sts" in output
+    # Must contain regions
+    assert "us-east-1" in output
+    # Must contain profile logic with sed (not grep -oP)
+    assert "sed" in output
+    assert "grep -oP" not in output
+    # Must use COMPREPLY
+    assert "COMPREPLY" in output
+    # Must use associative arrays (declare -A)
+    assert "declare -gA" in output or "declare -A" in output
+    # Must contain wait handling
+    assert "wait" in output
