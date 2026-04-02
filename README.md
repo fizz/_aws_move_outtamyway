@@ -16,6 +16,64 @@ This project replaces it with a static completion function (zsh or bash) generat
 - **`--region`**, **`--output`** — static completions from the catalog
 - **`_files`** — local path completion in argument position (the stock completer never does this)
 
+## In action
+
+`aws s3 [tab]` — porcelain commands only (the botocore operations are under `s3api`):
+
+```
+ -- AWS service --
+cp  ls  mb  mv  presign  rb  rm  sync  wait  website
+```
+
+`aws s3api [tab]` — the real botocore surface:
+
+```
+abort-multipart-upload    create-bucket             delete-bucket-cors        get-bucket-acl            list-buckets               put-bucket-acl
+complete-multipart-upload create-multipart-upload    delete-bucket-encryption  get-bucket-encryption     list-multipart-uploads     put-bucket-encryption
+copy-object               create-session            delete-object             get-object                list-objects-v2            put-object
+...
+```
+
+`aws ec2 wait [tab]` — 42 ec2 waiters, from botocore's `waiters-2.json`:
+
+```
+ -- ec2 waiter --
+bundle-task-complete      instance-exists           nat-gateway-available     snapshot-completed        volume-available
+conversion-task-cancelled instance-running          nat-gateway-deleted       spot-instance-request-fulfilled  volume-deleted
+customer-gateway-available instance-stopped         network-interface-available subnet-available         vpc-available
+export-task-completed     instance-terminated       password-data-available   system-status-ok          vpn-connection-available
+image-available           internet-gateway-exists   security-group-exists     volume-in-use             vpn-connection-deleted
+...
+```
+
+`aws --region [tab]` — all 46 regions across 7 AWS partitions:
+
+```
+ -- AWS region --
+af-south-1      ap-southeast-1  ca-west-1       eu-south-2      me-central-1    us-east-2       us-isob-east-1
+ap-east-1       ap-southeast-2  cn-north-1      eu-west-1       me-south-1      us-gov-east-1   us-isof-south-1
+ap-northeast-1  ap-southeast-3  cn-northwest-1  eu-west-2       sa-east-1       us-gov-west-1   us-west-1
+ap-northeast-2  ap-southeast-4  eu-central-1    eu-west-3       us-east-1       us-iso-east-1   us-west-2
+ap-northeast-3  ap-south-1      eu-central-2    il-central-1    us-iso-west-1
+ap-south-2      ca-central-1    eu-north-1      mx-central-1
+```
+
+`aws --output [tab]`:
+
+```
+json  table  text  yaml  yaml-stream
+```
+
+`aws --profile [tab]` — every profile from `~/.aws/config`, instantly:
+
+```
+ -- AWS profile --
+Prod.AdministratorAccess       Staging.PowerUserAccess        dev
+Dev.AdministratorAccess        Sandbox.ReadOnlyAccess         prod
+GovCloud.AdministratorAccess   Security.AWSAdministratorAccess
+...
+```
+
 ## Install
 
 ### Quick install (one file, no clone)
