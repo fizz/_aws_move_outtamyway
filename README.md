@@ -18,7 +18,40 @@ This project replaces it with a static completion function (zsh or bash) generat
 
 ## Install
 
-Clone the repo and run `make install`, which copies the completion files for both zsh and bash:
+### Quick install (one file, no clone)
+
+For **zsh**:
+
+```
+mkdir -p ~/.zsh/completions
+curl -L https://github.com/fizz/_aws_move_outtamyway/releases/latest/download/_aws_move_outtamyway \
+  -o ~/.zsh/completions/_aws_move_outtamyway
+```
+
+Add to `.zshrc` after `compinit`:
+
+```zsh
+autoload -Uz ~/.zsh/completions/_aws_move_outtamyway
+compdef _aws_move_outtamyway aws
+```
+
+For **bash**:
+
+```
+mkdir -p ~/.bash_completion.d
+curl -L https://github.com/fizz/_aws_move_outtamyway/releases/latest/download/_aws_move_outtamyway.bash \
+  -o ~/.bash_completion.d/_aws_move_outtamyway.bash
+```
+
+Add to `.bashrc`:
+
+```bash
+source ~/.bash_completion.d/_aws_move_outtamyway.bash
+```
+
+Open a new shell. `aws s3 [tab]` should be instant.
+
+### From source (if you want to regenerate)
 
 ```
 git clone https://github.com/fizz/_aws_move_outtamyway.git
@@ -26,20 +59,7 @@ cd _aws_move_outtamyway
 make install
 ```
 
-Then tell your shell to use it. For **zsh**, add to `.zshrc` after `compinit`:
-
-```zsh
-autoload -Uz ~/.zsh/completions/_aws_move_outtamyway
-compdef _aws_move_outtamyway aws
-```
-
-For **bash**, add to `.bashrc`:
-
-```bash
-source ~/.bash_completion.d/_aws_move_outtamyway.bash
-```
-
-Open a new shell. `aws s3 [tab]` should be instant.
+This installs both the zsh and bash completions. Add the shell config lines above, then open a new shell.
 
 ## How it works
 
