@@ -161,9 +161,13 @@ WHERE a.dam_effective_date = '2026-04-01' AND b.operation_name IS NULL;
 - [uv](https://docs.astral.sh/uv/) (only if you want to regenerate from botocore)
 - DuckDB (installed automatically as a Python dependency when regenerating)
 
-## The name
+## Origin story
 
-The stock completer's lag was so bad I had `unset '_comps[aws]'` in my zshrc for years, with the comment: *"get rid of the insane lag autocompleting local paths in aws commands."* This project finally replaces that line with something better.
+This project started with a [TIL about `TZ=[tab]`](https://fizz.today/til/tz-tab-zsh-completer-timezone-names/) — the discovery that zsh's `_time_zone` completer reads `/usr/share/zoneinfo/` to offer every timezone on earth, instantly. That became a [longer post about zsh completers as vocabulary construction kits](https://ferkakta.dev/blog/zsh-completions-vocabulary-construction-kit/) — systems that anticipate what you need before you know it exists.
+
+The stock AWS completer was the opposite of that. It shells out to Python on every tab, makes network calls, and never yields to `_files` for local paths. The lag was so bad I had `unset '_comps[aws]'` in my zshrc for years, with the comment: *"get rid of the insane lag autocompleting local paths in aws commands."*
+
+This project replaces that line with something better.
 
 ## License
 
