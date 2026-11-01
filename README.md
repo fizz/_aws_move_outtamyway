@@ -155,6 +155,8 @@ LEFT JOIN operations b ON a.service_name = b.service_name
 WHERE a.dam_effective_date = '2026-04-01' AND b.operation_name IS NULL;
 ```
 
+For a release, `make changelog PREV=v0.1.0 VERSION=v0.2.0` compares the committed completer with the one from the tag `PREV` and prints the release notes: new and removed services, operations, waiters and regions, and commands whose name changed.
+
 ## Requirements
 
 - zsh or bash 4+ (for the completer itself — zero other runtime dependencies)
