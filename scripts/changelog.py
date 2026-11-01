@@ -3,8 +3,8 @@
     python scripts/changelog.py OLD_FILE NEW_FILE [--old-version v0.1.0] [--new-version v0.2.0]
 
 Reads the completion arrays, the regions and the catalog header of each file, and prints
-Markdown for a GitHub release: a summary table, new and removed services, new and removed
-operations and waiters per service, regions, and commands whose name changed. Standard
+Markdown for a GitHub release: a summary table, new and removed commands, new and removed
+subcommands and waiters per command, regions, and subcommands whose name changed. Standard
 library only.
 """
 
@@ -41,9 +41,6 @@ def parse(text: str) -> Completer:
 
     regions = re.search(r"local -a regions=\(([^)]*)\)", text)
     ops = array("_aws_momy_ops")
-    # "wait" is the subcommand that opens the waiters, not an operation.
-    for names in ops.values():
-        names.discard("wait")
     return Completer(
         date=cli.group(2) if cli else header.group(1) if header else "unknown",
         ref=cli.group(3) if cli else header.group(2) if header else "unknown",
@@ -119,31 +116,31 @@ def notes(old: Completer, new: Completer, old_version: str, new_version: str) ->
         "",
         f"| | {old_version} | {new_version} | Change |",
         "|---|--:|--:|--:|",
-        f"| Services | {len(old.ops):,} | {len(new.ops):,} | {signed(len(new.ops) - len(old.ops))} |",
-        f"| Operations | {total(old.ops):,} | {total(new.ops):,} | {signed(total(new.ops) - total(old.ops))} |",
+        f"| Commands | {len(old.ops):,} | {len(new.ops):,} | {signed(len(new.ops) - len(old.ops))} |",
+        f"| Subcommands | {total(old.ops):,} | {total(new.ops):,} | {signed(total(new.ops) - total(old.ops))} |",
         f"| Waiters | {total(old.waiters):,} | {total(new.waiters):,} | {signed(total(new.waiters) - total(old.waiters))} |",
         f"| Regions | {len(old.regions)} | {len(new.regions)} | {signed(len(new.regions) - len(old.regions))} |",
     ]
 
     if new_services:
-        out += ["", f"## New services ({len(new_services)})", "", "| Service | Operations | Waiters |", "|---|--:|--:|"]
+        out += ["", f"## New commands ({len(new_services)})", "", "| Command | Subcommands | Waiters |", "|---|--:|--:|"]
         out += [f"| `{s}` | {len(new.ops[s])} | {len(new.waiters.get(s, ()))} |" for s in new_services]
         out += [""]
         for s in new_services:
-            out += details(f"<code>{s}</code>: {len(new.ops[s])} operations", sorted(new.ops[s]))
+            out += details(f"<code>{s}</code>: {len(new.ops[s])} subcommands", sorted(new.ops[s]))
     if gone_services:
-        out += ["", f"## Removed services ({len(gone_services)})", "", code(gone_services)]
+        out += ["", f"## Removed commands ({len(gone_services)})", "", code(gone_services)]
 
     if ops_added:
-        out += ["", f"## New operations in {len(ops_added)} services ({count(ops_added):,})", ""]
+        out += ["", f"## New subcommands in {len(ops_added)} command{'s' if len(ops_added) != 1 else ''} ({count(ops_added):,})", ""]
         for s in sorted(ops_added, key=lambda k: (-len(ops_added[k]), k)):
             out += details(f"<code>{s}</code> +{len(ops_added[s])}", ops_added[s])
     if ops_removed:
-        out += ["", f"## Removed operations ({count(ops_removed)})", ""]
+        out += ["", f"## Removed subcommands ({count(ops_removed)})", ""]
         out += [f"- `{s}`: {code(v)}" for s, v in sorted(ops_removed.items())]
 
     if w_added:
-        out += ["", f"## New waiters ({count(w_added)})", "", "| Service | `aws <service> wait …` |", "|---|---|"]
+        out += ["", f"## New waiters ({count(w_added)})", "", "| Command | `aws <command> wait …` |", "|---|---|"]
         out += [f"| `{s}` | {code(w_added[s])} |" for s in sorted(w_added, key=lambda k: (-len(w_added[k]), k))]
     if w_removed:
         out += ["", f"## Removed waiters ({count(w_removed)})", ""]
@@ -161,7 +158,7 @@ def notes(old: Completer, new: Completer, old_version: str, new_version: str) ->
         renamed.setdefault(s, []).extend(v)
     if renamed:
         out += ["", f"## Corrected names ({count(renamed)})", "",
-                "These now complete with the name the AWS CLI uses.", "", "| Service | Was | Now |", "|---|---|---|"]
+                "These now complete with the name the AWS CLI uses.", "", "| Command | Was | Now |", "|---|---|---|"]
         out += [f"| `{s}` | `{o}` | `{n}` |" for s in sorted(renamed) for o, n in renamed[s]]
 
     return "\n".join(out) + "\n"
