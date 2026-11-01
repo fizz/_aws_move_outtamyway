@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -128,10 +129,10 @@ def cli_requirements(src: Path) -> list[str]:
     return [line.strip() for line in cfg["options"]["install_requires"].splitlines() if line.strip()]
 
 
-# Native Python first. Releases from 2021 and 2022 pin packages (awscrt, cryptography)
-# that have no Apple Silicon or Python 3.12 builds, so they run on an Intel Python
-# 3.9 under Rosetta, with their own pins unchanged.
-INDEX_PYTHONS = ["3.12", "cpython-3.9-macos-x86_64"]
+# Python 3.12 first. Releases from 2021 and 2022 pin packages (awscrt, cryptography)
+# that have no Python 3.12 builds, and on a Mac no Apple Silicon builds either, so they
+# run on Python 3.9 (on a Mac, an Intel Python 3.9 under Rosetta), with their own pins.
+INDEX_PYTHONS = ["3.12", "cpython-3.9-macos-x86_64" if sys.platform == "darwin" else "3.9"]
 
 
 def build_cli_index(src: Path, released: str | None = None) -> Path:

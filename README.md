@@ -6,7 +6,7 @@ The stock AWS CLI completer (`aws_completer`) spawns a Python process on every t
 
 This project replaces it with a static completion function (zsh or bash) generated from a DuckDB catalog of the AWS API contract. The tab key returns in milliseconds because there is nothing to compute. The vocabulary is pre-baked.
 
-Each release is named after the AWS CLI v2 release it was generated from, and completes exactly that CLI's commands. There is a release for every AWS CLI v2 release since 2.3.0 (October 2021).
+Each release is named after the AWS CLI v2 release it was generated from, and completes exactly that CLI's commands. There is a release for every AWS CLI v2 release since 2.3.0 (October 2021), and a GitHub Actions workflow publishes the next one within hours of each new AWS CLI release.
 
 ## What it completes
 
@@ -167,6 +167,8 @@ WHERE a.aws_cli_version = '2.39.3' AND b.operation_name IS NULL;
 ```
 
 For a release, `make changelog PREV=2.39.2 VERSION=2.39.3` compares the committed completer with the one from the tag `PREV` and prints the release notes: new and removed services, operations, waiters and regions, and commands whose name changed.
+
+The workflow `.github/workflows/release.yml` runs `scripts/release.py` every 6 hours: for each AWS CLI release newer than the newest tag on `history`, it ingests the release, commits and tags its completers on `history`, and publishes the GitHub release with these notes.
 
 Each release is an immutable GitHub release: its tag and files cannot be changed after publication, so the install commands above always download the files that were published.
 
