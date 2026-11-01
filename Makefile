@@ -8,8 +8,16 @@ BASH_COMP_DIR ?= ~/.bash_completion.d
 ingest:
 	uv run python src/ingest.py --output $(DATALAKE) $(if $(VERSION),--aws-cli-version $(VERSION))
 
-generate: $(DATALAKE)
+# The completers are generated, not committed: every version is on the branch history
+# and attached to its release.
+$(DATALAKE):
+	$(MAKE) ingest
+
+generate: | $(DATALAKE)
 	uv run python src/generate.py --datalake $(DATALAKE) --output _aws_move_outtamyway --output-bash _aws_move_outtamyway.bash $(if $(VERSION),--aws-cli-version $(VERSION))
+
+_aws_move_outtamyway _aws_move_outtamyway.bash:
+	$(MAKE) generate
 
 install: _aws_move_outtamyway _aws_move_outtamyway.bash
 	mkdir -p $(FPATH_DIR)
@@ -23,17 +31,18 @@ install: _aws_move_outtamyway _aws_move_outtamyway.bash
 	@echo "Bash: add to .bashrc:"
 	@echo "  source $(BASH_COMP_DIR)/_aws_move_outtamyway.bash"
 
-test:
+test: _aws_move_outtamyway
 	uv run pytest tests/ -v
 	zsh tests/test_completions.zsh
 
-# Release notes: what changed in the completer since the release PREV, for example
-#   make changelog PREV=v0.1.0 > notes.md
+# Release notes between two releases on the branch history, for example
+#   make changelog PREV=2.39.2 VERSION=2.39.3 > notes.md
 changelog:
-	@test -n "$(PREV)" || { echo "Set PREV to the previous release tag, for example PREV=v0.1.0." >&2; exit 1; }
+	@test -n "$(PREV)" -a -n "$(VERSION)" || { echo "Set PREV and VERSION to two release tags, for example PREV=2.39.2 VERSION=2.39.3." >&2; exit 1; }
 	@mkdir -p .cache
 	@git show $(PREV):_aws_move_outtamyway > .cache/previous_completer
-	@python3 scripts/changelog.py .cache/previous_completer _aws_move_outtamyway --old-version $(PREV) --new-version "$(or $(VERSION),this release)"
+	@git show $(VERSION):_aws_move_outtamyway > .cache/completer
+	@python3 scripts/changelog.py .cache/previous_completer .cache/completer --old-version $(PREV) --new-version $(VERSION)
 
 clean:
-	rm -rf datalake/ .cache/
+	rm -rf datalake/ .cache/ _aws_move_outtamyway _aws_move_outtamyway.bash
