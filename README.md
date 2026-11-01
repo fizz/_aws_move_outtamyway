@@ -12,8 +12,8 @@ Each release is named after the AWS CLI v2 release it was generated from, and co
 
 In AWS CLI 2.39.3:
 
-- **442 services** — every service the AWS CLI exposes, including aliases (`s3api`, `configservice`, `ddb`)
-- **19,516 operations** — every API operation plus CLI-only commands (`s3 cp`, `s3 sync`, `configure set`)
+- **443 commands** — every service and command the AWS CLI has at the top level, with its own names (`s3`, `s3api`, `deploy`, `configure`, `login`)
+- **19,618 subcommands** — every API operation the CLI offers plus its own commands (`s3 cp`, `eks update-kubeconfig`, `ecr get-login-password`), without the operations it hides
 - **403 waiters** — `aws ec2 wait instance-running` and friends
 - **46 regions** — all 7 AWS partitions (commercial, China, GovCloud, and the four classified ones)
 - **`--profile`** — parsed from `~/.aws/config` at tab time (the only file read the completer does)
@@ -136,11 +136,11 @@ aws-cli release  →  parquet datalake  →  DuckDB  →  static zsh function
      ingest              catalog              generate              tab time
 ```
 
-**Ingest** reads `awscli/botocore` from one `aws/aws-cli` release tag (the AWS CLI v2's own copy of botocore), walks the service model JSON files, and writes one parquet partition per AWS CLI version. It also reads a maintained registry (`cli_customs.json`) for the handful of CLI-only commands that don't exist in botocore — things like `s3 cp` and `configure set`.
+**Ingest** takes one `aws/aws-cli` release tag and asks that release what it completes: it runs the release's own `scripts/gen-ac-index` on its source, with the dependencies that release pins, which builds the same index `aws_completer` reads. The command tree from that index (every command, subcommand and waiter, with the CLI's renames such as `deploy`, its CLI-only commands such as `eks update-kubeconfig`, and without the operations it hides) goes to one parquet partition per AWS CLI version. Ingest also writes the API models of the release's copy of botocore (`awscli/botocore`), which keep the history of AWS's APIs.
 
-**Catalog** is DuckDB reading parquet directly. A SQL macro turns botocore's PascalCase into the command names the AWS CLI uses (`DescribeInstances` → `describe-instances`, `GetStatementResultV2` → `get-statement-result-v2`, `ListWebACLs` → `list-web-acls`). It applies the same rule as botocore's `xform_name()`, and a table of the names botocore spells out by hand (`ExecutePartiQLStatement` → `execute-partiql-statement`), read from that release's source at ingest, wins over the rule. The original PascalCase is preserved in the parquet — transformation happens at query time. A test checks every operation and waiter in botocore against `xform_name()`.
+**Catalog** is DuckDB reading parquet directly. The completer comes from the command tree. For the API models, a SQL macro turns botocore's PascalCase into command names (`DescribeInstances` → `describe-instances`, `GetStatementResultV2` → `get-statement-result-v2`) with the same rule as botocore's `xform_name()`, and the names botocore spells out by hand, read from that release's source, win over the rule. The original PascalCase is preserved in the parquet.
 
-**Generate** queries the catalog and emits completion files for both zsh and bash. Each contains two associative arrays (services→operations, services→waiters), the completion function, and static global options. Both generated files are committed to the repo, so you can install without running the pipeline yourself.
+**Generate** queries the catalog and emits completion files for both zsh and bash. Each contains two associative arrays (services→operations, services→waiters), the completion function, and static global options. Both generated files are committed to the repo, so you can install without running the pipeline yourself. The completer for AWS CLI 2.37.0 matches the `aws_completer` of AWS CLI 2.37.0 for all 440 commands, 19,400 subcommands and 381 waiters.
 
 ## Regenerating
 
@@ -173,7 +173,7 @@ Each release is an immutable GitHub release: its tag and files cannot be changed
 ## Requirements
 
 - zsh or bash 4+ (for the completer itself — zero other runtime dependencies)
-- [uv](https://docs.astral.sh/uv/) and git (only if you want to regenerate)
+- [uv](https://docs.astral.sh/uv/) and git (only if you want to regenerate). uv installs the Python and the packages each AWS CLI release needs. Releases from 2021 and 2022 pin packages with no Apple Silicon builds; on a Mac they run on an Intel Python under Rosetta.
 - DuckDB (installed automatically as a Python dependency when regenerating)
 
 ## Origin story
