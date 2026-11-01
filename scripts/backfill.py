@@ -1,9 +1,10 @@
 """Build a completer for every AWS CLI v2 release, oldest first, on the branch history.
 
-    uv run python scripts/backfill.py [--clone .cache/aws-cli.git] [--from 2.3.0] [--to 2.39.3]
+    uv run python scripts/backfill.py [--clone .cache/aws-cli.git] [--from 2.3.0] [--to 2.39.3] [--jobs 6]
 
-For each release it ingests awscli/botocore at the release tag (git archive from one bare
-clone of aws/aws-cli), generates the zsh and bash completers, commits them with LICENSE
+First it ingests every release that is not in the datalake yet, several at a time: each
+one builds the release's own auto-complete index from its source (git archive from one
+bare clone of aws/aws-cli). Then, oldest first, it generates the zsh and bash completers, commits them with LICENSE
 to the local branch history, and tags that commit with the AWS CLI version. It builds
 locally only; pushing the branch and tags, and the GitHub releases, are separate steps.
 Versions already in the datalake are not ingested again, and versions already tagged
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import subprocess
 import sys
 import time
@@ -66,6 +68,7 @@ def main() -> None:
     p.add_argument("--datalake", type=Path, default=REPO / "datalake" / "aws_api_catalog")
     p.add_argument("--from", dest="first", default="2.3.0")
     p.add_argument("--to", dest="last")
+    p.add_argument("--jobs", type=int, default=6)
     a = p.parse_args()
 
     if not a.clone.exists():
@@ -78,21 +81,33 @@ def main() -> None:
         v for v in aws_cli_versions()
         if parse_version(v) >= parse_version(a.first) and (not a.last or parse_version(v) <= parse_version(a.last))
     ]
+    missing = [v for v in versions if not tag_exists(v) and not (a.datalake / f"aws_cli_version={v}").exists()]
+    started = time.monotonic()
+    with ProcessPoolExecutor(a.jobs) as pool:
+        futures = {pool.submit(ingest, v, a.datalake, a.clone, True): v for v in missing}
+        failed = {}
+        for n, f in enumerate(as_completed(futures), 1):
+            if f.exception():
+                failed[futures[f]] = f.exception()
+                print(f"FAILED {futures[f]}: {f.exception()}", flush=True)
+                continue
+            rate = (time.monotonic() - started) / n
+            print(f"ingested {futures[f]} [{n}/{len(missing)}], ~{rate * (len(missing) - n) / 60:.0f} min left", flush=True)
+    if failed:
+        # history gets no gaps: nothing is committed until every release is ingested.
+        sys.exit(f"{len(failed)} releases failed, nothing committed: {', '.join(sorted(failed))}")
+
     license_text = (REPO / "LICENSE").read_bytes()
     started, done = time.monotonic(), 0
     for i, version in enumerate(versions, 1):
         if tag_exists(version):
             continue
-        if not (a.datalake / f"aws_cli_version={version}").exists():
-            ingest(version, a.datalake, a.clone, quiet=True)
         catalog = load_catalog(a.datalake, version)
         commit_version(version, str(catalog["effective_date"]), emit_zsh(catalog), emit_bash(catalog), license_text)
         done += 1
         ops = sum(len(v) for v in catalog["service_operations"].values())
-        rate = (time.monotonic() - started) / done
         print(f"[{i}/{len(versions)}] {version} ({catalog['effective_date']}): "
-              f"{len(catalog['services'])} services, {ops} operations, ~{rate * (len(versions) - i) / 60:.0f} min left",
-              flush=True)
+              f"{len(catalog['services'])} commands, {ops} subcommands", flush=True)
     print(f"Done: {done} new versions on {BRANCH}.")
 
 

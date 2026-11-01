@@ -43,11 +43,11 @@ if [[ "${_aws_momy_ops[s3]}" != *"cp"* ]]; then
 fi
 echo "PASS: s3 CLI customs merged"
 
-if [[ "${_aws_momy_ops[s3]}" != *"wait"* ]]; then
-  echo "FAIL: s3 wait pseudo-subcommand not found"
+if [[ "${_aws_momy_ops[s3api]}" != *"wait"* ]]; then
+  echo "FAIL: s3api wait pseudo-subcommand not found"
   exit 1
 fi
-echo "PASS: s3 wait subcommand present"
+echo "PASS: s3api wait subcommand present"
 
 # No #compdef
 if grep -q '#compdef' "$COMPLETER"; then

@@ -102,6 +102,22 @@ def load_catalog(datalake_path: Path, aws_cli_version: str | None = None) -> dic
     except duckdb.IOException:
         pass
 
+    # The release's own command tree, from its auto-complete index, when ingest wrote it.
+    # It is what the AWS CLI itself completes: renamed services (deploy), CLI-only
+    # commands (eks update-kubeconfig), and without the operations the CLI hides.
+    commands_file = datalake_path / f"aws_cli_version={version}" / "cli_commands.parquet"
+    if commands_file.exists():
+        tree = con.execute(
+            f"SELECT service_name, command_name, is_waiter FROM read_parquet('{commands_file}') ORDER BY ALL"
+        ).fetchall()
+        services = sorted({s for s, c, _ in tree if c is None})
+        service_operations = {s: [] for s in services}
+        service_waiters = {}
+        for s, c, is_waiter in tree:
+            if c is None:
+                continue
+            (service_waiters.setdefault(s, []) if is_waiter else service_operations.setdefault(s, [])).append(c)
+
     # Regions
     try:
         region_rows = con.execute(
