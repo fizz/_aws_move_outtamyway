@@ -3,3 +3,5 @@ datalake/
 __pycache__/
 *.egg-info/
 .cache/
+_aws_move_outtamyway
+_aws_move_outtamyway.bash

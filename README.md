@@ -6,7 +6,7 @@ The stock AWS CLI completer (`aws_completer`) spawns a Python process on every t
 
 This project replaces it with a static completion function (zsh or bash) generated from a DuckDB catalog of the AWS API contract. The tab key returns in milliseconds because there is nothing to compute. The vocabulary is pre-baked.
 
-Each release is named after the AWS CLI v2 release it was generated from, and completes exactly that CLI's commands. There is a release for every AWS CLI v2 release since 2.3.0 (October 2021).
+Each release is named after the AWS CLI v2 release it was generated from, and completes exactly that CLI's commands. There is a release for every AWS CLI v2 release since 2.3.0 (October 2021), and a GitHub Actions workflow publishes the next one within hours of each new AWS CLI release.
 
 ## What it completes
 
@@ -125,7 +125,7 @@ cd _aws_move_outtamyway
 make install
 ```
 
-This installs both the zsh and bash completions. Add the shell config lines above, then open a new shell.
+This generates the completers for the newest AWS CLI release (`VERSION=2.37.0` for another) and installs both the zsh and bash completions. It needs uv and git. Add the shell config lines above, then open a new shell.
 
 ## How it works
 
@@ -140,7 +140,7 @@ aws-cli release  →  parquet datalake  →  DuckDB  →  static zsh function
 
 **Catalog** is DuckDB reading parquet directly. The completer comes from the command tree. For the API models, a SQL macro turns botocore's PascalCase into command names (`DescribeInstances` → `describe-instances`, `GetStatementResultV2` → `get-statement-result-v2`) with the same rule as botocore's `xform_name()`, and the names botocore spells out by hand, read from that release's source, win over the rule. The original PascalCase is preserved in the parquet.
 
-**Generate** queries the catalog and emits completion files for both zsh and bash. Each contains two associative arrays (services→operations, services→waiters), the completion function, and static global options. Both generated files are committed to the repo, so you can install without running the pipeline yourself. The completer for AWS CLI 2.37.0 matches the `aws_completer` of AWS CLI 2.37.0 for all 440 commands, 19,400 subcommands and 381 waiters.
+**Generate** queries the catalog and emits completion files for both zsh and bash. Each contains two associative arrays (services→operations, services→waiters), the completion function, and static global options. The generated files are not committed to `main`: every version is on the branch `history`, tagged with its AWS CLI version, and attached to its release. The completer for AWS CLI 2.37.0 matches the `aws_completer` of AWS CLI 2.37.0 for all 440 commands, 19,400 subcommands and 381 waiters.
 
 ## Regenerating
 
@@ -166,7 +166,9 @@ LEFT JOIN read_parquet('datalake/aws_api_catalog/*/operations.parquet', hive_par
 WHERE a.aws_cli_version = '2.39.3' AND b.operation_name IS NULL;
 ```
 
-For a release, `make changelog PREV=2.39.2 VERSION=2.39.3` compares the committed completer with the one from the tag `PREV` and prints the release notes: new and removed services, operations, waiters and regions, and commands whose name changed.
+`make changelog PREV=2.39.2 VERSION=2.39.3` compares the completers of two releases and prints release notes: new and removed commands, subcommands, waiters and regions, and subcommands whose name changed.
+
+The workflow `.github/workflows/release.yml` runs `scripts/release.py` every 6 hours: for each AWS CLI release newer than the newest tag on `history`, it ingests the release, commits and tags its completers on `history`, and publishes the GitHub release with these notes.
 
 Each release is an immutable GitHub release: its tag and files cannot be changed after publication, so the install commands above always download the files that were published.
 

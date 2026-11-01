@@ -1,6 +1,6 @@
 """Release notes: what changed between two generated zsh completers.
 
-    python scripts/changelog.py OLD_FILE NEW_FILE [--old-version v0.1.0] [--new-version v0.2.0]
+    python scripts/changelog.py OLD_FILE NEW_FILE [--old-version 2.39.2] [--new-version 2.39.3]
 
 Reads the completion arrays, the regions and the catalog header of each file, and prints
 Markdown for a GitHub release: a summary table, new and removed commands, new and removed
@@ -16,7 +16,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-BOTOCORE = "https://github.com/boto/botocore/commit/"
 AWS_CLI = "https://github.com/aws/aws-cli/blob/{v}/CHANGELOG.rst"
 
 
@@ -24,17 +23,17 @@ AWS_CLI = "https://github.com/aws/aws-cli/blob/{v}/CHANGELOG.rst"
 class Completer:
     date: str
     ref: str
-    aws_cli: str | None
+    aws_cli: str
     ops: dict[str, set[str]]
     waiters: dict[str, set[str]]
     regions: set[str]
 
 
 def parse(text: str) -> Completer:
-    # "AWS CLI 2.39.3 | released 2026-10-30 | aws-cli ref: 9fcfbf50", or before 2.39.3
-    # "Catalog date: 2026-04-02 | botocore ref: d0feedac".
+    # "# AWS CLI 2.39.3 | released 2026-10-30 | aws-cli ref: 3953cea5"
     cli = re.search(r"# AWS CLI (\S+) \| released (\S+) \| aws-cli ref: (\S+)", text)
-    header = re.search(r"Catalog date: (\S+) \| botocore ref: (\S+)", text)
+    if not cli:
+        raise ValueError("not a completer: no '# AWS CLI <version> | released <date> | aws-cli ref: <ref>' line")
 
     def array(name: str) -> dict[str, set[str]]:
         return {s: set(v.split()) for s, v in re.findall(rf"^{name}\[([^\]]+)\]='([^']*)'", text, re.M)}
@@ -42,9 +41,9 @@ def parse(text: str) -> Completer:
     regions = re.search(r"local -a regions=\(([^)]*)\)", text)
     ops = array("_aws_momy_ops")
     return Completer(
-        date=cli.group(2) if cli else header.group(1) if header else "unknown",
-        ref=cli.group(3) if cli else header.group(2) if header else "unknown",
-        aws_cli=cli.group(1) if cli else None,
+        date=cli.group(2),
+        ref=cli.group(3),
+        aws_cli=cli.group(1),
         ops=ops,
         waiters=array("_aws_momy_waiters"),
         regions=set(regions.group(1).split()) if regions else set(),
@@ -107,9 +106,7 @@ def notes(old: Completer, new: Completer, old_version: str, new_version: str) ->
         return sum(len(v) for v in d.values())
 
     def source(c: Completer) -> str:
-        if c.aws_cli:
-            return f"AWS CLI [{c.aws_cli}]({AWS_CLI.format(v=c.aws_cli)}), released {c.date}"
-        return f"botocore [`{c.ref}`]({BOTOCORE}{c.ref}) from {c.date}"
+        return f"AWS CLI [{c.aws_cli}]({AWS_CLI.format(v=c.aws_cli)}), released {c.date}"
 
     out = [
         f"The completer matches {source(new)}. {old_version} matched {source(old)}.",

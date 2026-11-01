@@ -1,0 +1,31 @@
+# Unit tests, then a completer built from the newest AWS CLI release and the shell
+# smoke tests on it.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install zsh
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh
+
+      - name: Unit tests
+        run: uv run pytest tests/ -v
+
+      - name: Generate from the newest AWS CLI release
+        run: make generate
+
+      - name: Shell smoke tests
+        run: zsh tests/test_completions.zsh
