@@ -124,13 +124,13 @@ This installs both the zsh and bash completions. Add the shell config lines abov
 Three layers, fully decoupled:
 
 ```
-botocore (GitHub)  →  parquet datalake  →  DuckDB + inflector  →  static zsh function
+botocore (GitHub)  →  parquet datalake  →  DuckDB  →  static zsh function
      ingest              catalog              generate              tab time
 ```
 
 **Ingest** clones `boto/botocore` from GitHub, walks the service model JSON files, and writes partitioned parquet. It also reads a maintained registry (`cli_customs.json`) for the handful of CLI-only commands that don't exist in botocore — things like `s3 cp` and `configure set`.
 
-**Catalog** is DuckDB reading parquet directly. The [inflector](https://github.com/thiruselvaa/duckdb-extensions-inflector) community extension handles the PascalCase-to-kebab-case transformation that botocore operations need (`DescribeInstances` → `describe-instances`). The original PascalCase is preserved in the parquet — transformation happens at query time.
+**Catalog** is DuckDB reading parquet directly. A SQL macro turns botocore's PascalCase into the command names the AWS CLI uses (`DescribeInstances` → `describe-instances`, `GetStatementResultV2` → `get-statement-result-v2`, `ListWebACLs` → `list-web-acls`). It applies the same rule as botocore's `xform_name()`, and a table of the names botocore spells out by hand (`ExecutePartiQLStatement` → `execute-partiql-statement`), read from botocore's source at ingest, wins over the rule. The original PascalCase is preserved in the parquet — transformation happens at query time. A test checks every operation and waiter in botocore against `xform_name()`.
 
 **Generate** queries the catalog and emits completion files for both zsh and bash. Each contains two associative arrays (services→operations, services→waiters), the completion function, and static global options. Both generated files are committed to the repo, so you can install without running the pipeline yourself.
 

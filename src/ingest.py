@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import gzip
 import json
 import os
@@ -17,6 +18,7 @@ def write_parquet(
     regions: list[dict],
     output_dir: Path,
     effective_date: str,
+    xform_exceptions: list[dict] | None = None,
 ) -> Path:
     """Write extracted data to partitioned parquet files."""
     import duckdb
@@ -40,6 +42,7 @@ def write_parquet(
     _write(operations, "operations.parquet")
     _write(waiters, "waiters.parquet")
     _write(regions, "regions.parquet")
+    _write(xform_exceptions or [], "xform_exceptions.parquet")
 
     con.close()
     return partition_dir
@@ -102,6 +105,10 @@ def main():
         regions = extract_regions(botocore_dest)
         print(f"  {len(regions)} regions")
 
+        print("Extracting CLI name exceptions...")
+        xform_exceptions = extract_xform_exceptions(botocore_dest, gitref=botocore_ref)
+        print(f"  {len(xform_exceptions)} exceptions")
+
         # Write
         print(f"Writing parquet to {args.output}/dam_effective_date={effective_date}/")
         write_parquet(
@@ -110,6 +117,7 @@ def main():
             regions=regions,
             output_dir=args.output,
             effective_date=effective_date,
+            xform_exceptions=xform_exceptions,
         )
         print("Done.")
 
@@ -247,6 +255,33 @@ def extract_waiters(botocore_path: Path, gitref: str = "unknown") -> list[dict]:
                 "dam_gitref": gitref,
             })
     return rows
+
+
+def extract_xform_exceptions(botocore_path: Path, gitref: str = "unknown") -> list[dict]:
+    """Extract the operation names that botocore's xform_name() does not derive by rule.
+
+    The AWS CLI names a command with xform_name(operation, "-"). Its rule gets a few
+    names wrong (CreateCachediSCSIVolume, ExecutePartiQLStatement, the WhatsApp
+    operations), so botocore keeps their CLI names in the _xform_cache dict in
+    botocore/__init__.py. This reads that dict from the source, at the same ref as the
+    service models, without importing botocore.
+
+    botocore_path is a clone of boto/botocore or a directory that contains the botocore
+    package. Returns list of dicts with keys: operation_name, cli_name, dam_gitref
+    """
+    init = botocore_path / "botocore" / "__init__.py"
+    if not init.exists():
+        init = botocore_path / "__init__.py"
+    for node in ast.parse(init.read_text()).body:
+        target = node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None
+        if isinstance(target, ast.Name) and target.id == "_xform_cache":
+            cache = ast.literal_eval(node.value)
+            return [
+                {"operation_name": name, "cli_name": cli_name, "dam_gitref": gitref}
+                for (name, sep), cli_name in sorted(cache.items())
+                if sep == "-"
+            ]
+    raise ValueError(f"no _xform_cache in {init}")
 
 
 def extract_regions(botocore_path: Path) -> list[dict]:

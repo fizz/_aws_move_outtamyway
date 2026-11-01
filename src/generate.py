@@ -4,22 +4,56 @@ from __future__ import annotations
 from pathlib import Path
 import duckdb
 
+# The CLI name of a botocore operation or waiter, as the AWS CLI derives it with
+# botocore's xform_name(name, "-"): a plural acronym at the end becomes one word
+# (ListWebACLs -> list-web-acls), a capital that starts a word is split off, and a
+# capital after a lowercase letter or a digit is split off. tests/test_xform.py checks it
+# against xform_name() for every model in botocore.
+BOTOCORE_KEBAB = r"""
+CREATE OR REPLACE MACRO botocore_kebab(name) AS lower(regexp_replace(regexp_replace(
+    CASE WHEN regexp_matches(name, '[A-Z]{2,}s$')
+         THEN regexp_replace(name, '[A-Z]{2,}s$', '') || '-' || lower(regexp_extract(name, '[A-Z]{2,}s$'))
+         ELSE name END,
+    '(.)([A-Z][a-z]+)', '\1-\2', 'g'),
+    '([a-z0-9])([A-Z])', '\1-\2', 'g'))
+"""
+
+
+def define_cli_names(con: duckdb.DuckDBPyConnection, exceptions_glob: str | None = None, effective_date=None) -> None:
+    """Define botocore_kebab() and the xform_exceptions table on a connection.
+
+    xform_exceptions holds the names botocore spells out by hand (ingest reads them
+    from botocore's source); an exception wins over the rule. Without the file the
+    table is empty.
+    """
+    con.execute(BOTOCORE_KEBAB)
+    con.execute("CREATE OR REPLACE TABLE xform_exceptions (operation_name VARCHAR, cli_name VARCHAR)")
+    if exceptions_glob:
+        try:
+            con.execute(
+                f"""INSERT INTO xform_exceptions
+                    SELECT operation_name, cli_name FROM read_parquet('{exceptions_glob}', hive_partitioning=true)
+                    WHERE dam_effective_date = '{effective_date}'"""
+            )
+        except duckdb.IOException:
+            pass
+
 
 def load_catalog(datalake_path: Path) -> dict:
     """Load the latest catalog partition from parquet via DuckDB."""
     con = duckdb.connect()
-    con.execute("INSTALL inflector FROM community")
-    con.execute("LOAD inflector")
 
     ops_glob = str(datalake_path / "dam_effective_date=*" / "operations.parquet")
     waiters_glob = str(datalake_path / "dam_effective_date=*" / "waiters.parquet")
     regions_glob = str(datalake_path / "dam_effective_date=*" / "regions.parquet")
+    exceptions_glob = str(datalake_path / "dam_effective_date=*" / "xform_exceptions.parquet")
 
     # Find latest effective date
     dates = con.execute(
         f"SELECT DISTINCT dam_effective_date FROM read_parquet('{ops_glob}', hive_partitioning=true) ORDER BY dam_effective_date DESC LIMIT 1"
     ).fetchall()
     effective_date = dates[0][0] if dates else "unknown"
+    define_cli_names(con, exceptions_glob, effective_date)
 
     # Services
     services = sorted(
@@ -32,13 +66,14 @@ def load_catalog(datalake_path: Path) -> dict:
     # Operations per service — kebab-case for botocore ops, as-is for CLI customs
     service_operations = {}
     rows = con.execute(
-        f"""SELECT service_name,
-                   CASE WHEN is_cli_custom THEN operation_name
-                        ELSE inflector_to_kebab_case(operation_name)
+        f"""SELECT o.service_name,
+                   CASE WHEN o.is_cli_custom THEN o.operation_name
+                        ELSE coalesce(e.cli_name, botocore_kebab(o.operation_name))
                    END as cli_name
-            FROM read_parquet('{ops_glob}', hive_partitioning=true)
-            WHERE dam_effective_date = '{effective_date}'
-            ORDER BY service_name, cli_name"""
+            FROM read_parquet('{ops_glob}', hive_partitioning=true) o
+            LEFT JOIN xform_exceptions e ON e.operation_name = o.operation_name
+            WHERE o.dam_effective_date = '{effective_date}'
+            ORDER BY o.service_name, cli_name"""
     ).fetchall()
     for svc, op in rows:
         service_operations.setdefault(svc, []).append(op)
@@ -47,10 +82,11 @@ def load_catalog(datalake_path: Path) -> dict:
     service_waiters = {}
     try:
         waiter_rows = con.execute(
-            f"""SELECT service_name, inflector_to_kebab_case(waiter_name) as cli_name
-                FROM read_parquet('{waiters_glob}', hive_partitioning=true)
-                WHERE dam_effective_date = '{effective_date}'
-                ORDER BY service_name, cli_name"""
+            f"""SELECT w.service_name, coalesce(e.cli_name, botocore_kebab(w.waiter_name)) as cli_name
+                FROM read_parquet('{waiters_glob}', hive_partitioning=true) w
+                LEFT JOIN xform_exceptions e ON e.operation_name = w.waiter_name
+                WHERE w.dam_effective_date = '{effective_date}'
+                ORDER BY w.service_name, cli_name"""
         ).fetchall()
         for svc, name in waiter_rows:
             service_waiters.setdefault(svc, []).append(name)
