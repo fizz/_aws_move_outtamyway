@@ -1,14 +1,15 @@
 DATALAKE ?= datalake/aws_api_catalog
+# VERSION: an AWS CLI v2 release, for example VERSION=2.39.3. Default: the newest.
 FPATH_DIR ?= ~/.zsh/completions
 BASH_COMP_DIR ?= ~/.bash_completion.d
 
-.PHONY: ingest generate install test clean
+.PHONY: ingest generate install test changelog clean
 
 ingest:
-	uv run python src/ingest.py --output $(DATALAKE)
+	uv run python src/ingest.py --output $(DATALAKE) $(if $(VERSION),--aws-cli-version $(VERSION))
 
 generate: $(DATALAKE)
-	uv run python src/generate.py --datalake $(DATALAKE) --output _aws_move_outtamyway --output-bash _aws_move_outtamyway.bash
+	uv run python src/generate.py --datalake $(DATALAKE) --output _aws_move_outtamyway --output-bash _aws_move_outtamyway.bash $(if $(VERSION),--aws-cli-version $(VERSION))
 
 install: _aws_move_outtamyway _aws_move_outtamyway.bash
 	mkdir -p $(FPATH_DIR)
@@ -25,6 +26,14 @@ install: _aws_move_outtamyway _aws_move_outtamyway.bash
 test:
 	uv run pytest tests/ -v
 	zsh tests/test_completions.zsh
+
+# Release notes: what changed in the completer since the release PREV, for example
+#   make changelog PREV=v0.1.0 > notes.md
+changelog:
+	@test -n "$(PREV)" || { echo "Set PREV to the previous release tag, for example PREV=v0.1.0." >&2; exit 1; }
+	@mkdir -p .cache
+	@git show $(PREV):_aws_move_outtamyway > .cache/previous_completer
+	@python3 scripts/changelog.py .cache/previous_completer _aws_move_outtamyway --old-version $(PREV) --new-version "$(or $(VERSION),this release)"
 
 clean:
 	rm -rf datalake/ .cache/

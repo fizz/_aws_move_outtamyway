@@ -103,10 +103,10 @@ def test_write_parquet(tmp_path):
         waiters=waiters,
         regions=regions,
         output_dir=output_dir,
-        effective_date="2026-04-01",
+        aws_cli_version="2.39.3",
     )
 
-    partition_dir = output_dir / "dam_effective_date=2026-04-01"
+    partition_dir = output_dir / "aws_cli_version=2.39.3"
     assert (partition_dir / "operations.parquet").exists()
     assert (partition_dir / "regions.parquet").exists()
 
@@ -166,3 +166,32 @@ def test_aliases_separate_porcelain_from_plumbing(tmp_path):
     # sts is unaffected (not aliased)
     sts_ops = [r["operation_name"] for r in merged if r["service_name"] == "sts"]
     assert sts_ops == ["AssumeRole"]
+
+
+def test_extract_cli_commands_reads_the_index_tree(tmp_path):
+    """Top-level commands, their subcommands, and the waiters under wait."""
+    import sqlite3
+    from src.ingest import extract_cli_commands
+    index = tmp_path / "ac.index"
+    con = sqlite3.connect(index)
+    con.execute("CREATE TABLE command_table (command TEXT, full_name TEXT, parent TEXT)")
+    con.executemany("INSERT INTO command_table VALUES (?, ?, ?)", [
+        ("deploy", "deploy", "aws"),
+        ("eks", "eks", "aws"),
+        ("update-kubeconfig", "update-kubeconfig", "aws.eks"),
+        ("wait", "wait", "aws.eks"),
+        ("cluster-active", "cluster-active", "aws.eks.wait"),
+        ("sso", "sso", "aws.configure"),
+        ("token", "token", "aws.configure.sso"),
+    ])
+    con.commit()
+    con.close()
+    rows = {(r["service_name"], r["command_name"], r["is_waiter"]) for r in extract_cli_commands(index, gitref="abc")}
+    assert rows == {
+        ("deploy", None, False),
+        ("eks", None, False),
+        ("eks", "update-kubeconfig", False),
+        ("eks", "wait", False),
+        ("eks", "cluster-active", True),
+        ("configure", "sso", False),
+    }
