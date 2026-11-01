@@ -17,18 +17,23 @@ from dataclasses import dataclass
 from pathlib import Path
 
 BOTOCORE = "https://github.com/boto/botocore/commit/"
+AWS_CLI = "https://github.com/aws/aws-cli/blob/{v}/CHANGELOG.rst"
 
 
 @dataclass
 class Completer:
     date: str
     ref: str
+    aws_cli: str | None
     ops: dict[str, set[str]]
     waiters: dict[str, set[str]]
     regions: set[str]
 
 
 def parse(text: str) -> Completer:
+    # "AWS CLI 2.39.3 | released 2026-10-30 | aws-cli ref: 9fcfbf50", or before 2.39.3
+    # "Catalog date: 2026-04-02 | botocore ref: d0feedac".
+    cli = re.search(r"# AWS CLI (\S+) \| released (\S+) \| aws-cli ref: (\S+)", text)
     header = re.search(r"Catalog date: (\S+) \| botocore ref: (\S+)", text)
 
     def array(name: str) -> dict[str, set[str]]:
@@ -40,8 +45,9 @@ def parse(text: str) -> Completer:
     for names in ops.values():
         names.discard("wait")
     return Completer(
-        date=header.group(1) if header else "unknown",
-        ref=header.group(2) if header else "unknown",
+        date=cli.group(2) if cli else header.group(1) if header else "unknown",
+        ref=cli.group(3) if cli else header.group(2) if header else "unknown",
+        aws_cli=cli.group(1) if cli else None,
         ops=ops,
         waiters=array("_aws_momy_waiters"),
         regions=set(regions.group(1).split()) if regions else set(),
@@ -103,9 +109,13 @@ def notes(old: Completer, new: Completer, old_version: str, new_version: str) ->
     def total(d):
         return sum(len(v) for v in d.values())
 
+    def source(c: Completer) -> str:
+        if c.aws_cli:
+            return f"AWS CLI [{c.aws_cli}]({AWS_CLI.format(v=c.aws_cli)}), released {c.date}"
+        return f"botocore [`{c.ref}`]({BOTOCORE}{c.ref}) from {c.date}"
+
     out = [
-        f"The completer now matches botocore [`{new.ref}`]({BOTOCORE}{new.ref}) from {new.date}. "
-        f"{old_version} matched [`{old.ref}`]({BOTOCORE}{old.ref}) from {old.date}.",
+        f"The completer matches {source(new)}. {old_version} matched {source(old)}.",
         "",
         f"| | {old_version} | {new_version} | Change |",
         "|---|--:|--:|--:|",

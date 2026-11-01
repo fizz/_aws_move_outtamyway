@@ -1,4 +1,10 @@
-"""Layer 1: Ingest AWS API contract from botocore + aws-cli repos."""
+"""Layer 1: Ingest the AWS API contract of one AWS CLI v2 release.
+
+AWS CLI v2 carries its own copy of botocore in awscli/botocore, with the service models,
+waiters, endpoints and CLI name exceptions that its commands come from. Ingest reads
+that copy at a release tag, so each catalog partition, and each completer, matches one
+AWS CLI version exactly.
+"""
 
 from __future__ import annotations
 
@@ -6,9 +12,9 @@ import ast
 import gzip
 import json
 import os
+import re
 import subprocess
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -17,13 +23,13 @@ def write_parquet(
     waiters: list[dict],
     regions: list[dict],
     output_dir: Path,
-    effective_date: str,
+    aws_cli_version: str,
     xform_exceptions: list[dict] | None = None,
 ) -> Path:
-    """Write extracted data to partitioned parquet files."""
+    """Write extracted data to the partition aws_cli_version=<version>."""
     import duckdb
 
-    partition_dir = output_dir / f"dam_effective_date={effective_date}"
+    partition_dir = output_dir / f"aws_cli_version={aws_cli_version}"
     partition_dir.mkdir(parents=True, exist_ok=True)
 
     con = duckdb.connect()
@@ -48,78 +54,100 @@ def write_parquet(
     return partition_dir
 
 
-def clone_repo(url: str, branch: str, dest: Path) -> str:
-    """Shallow clone a git repo and return the HEAD commit SHA."""
-    # Suppress VS Code's GIT_ASKPASS injection which breaks unauthenticated HTTPS clones
+AWS_CLI_URL = "https://github.com/aws/aws-cli.git"
+# The first AWS CLI v2 release with its own copy of botocore. Earlier v2 releases
+# installed a pre-release botocore package instead.
+FIRST_VERSION = (2, 3, 0)
+
+
+def parse_version(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def aws_cli_versions(url: str = AWS_CLI_URL) -> list[str]:
+    """The AWS CLI v2 release tags from FIRST_VERSION on, oldest first."""
+    out = subprocess.run(["git", "ls-remote", "--tags", url], capture_output=True, text=True, check=True).stdout
+    tags = {line.rsplit("refs/tags/", 1)[1] for line in out.splitlines() if "refs/tags/" in line}
+    versions = [t for t in tags if re.fullmatch(r"2\.\d+\.\d+", t) and parse_version(t) >= FIRST_VERSION]
+    return sorted(versions, key=parse_version)
+
+
+def export_aws_cli(version: str, dest: Path, clone: Path | None = None) -> tuple[Path, str, str]:
+    """Put awscli/botocore of one AWS CLI release under dest.
+
+    With clone, a full local clone of aws/aws-cli, it uses git archive. Without, it makes
+    a shallow, sparse clone of the tag. Returns the botocore root to read (dest/awscli),
+    the commit SHA of the tag, and the date of that commit (YYYY-MM-DD).
+    """
     env = os.environ.copy()
     env.pop("GIT_ASKPASS", None)
     env.pop("VSCODE_GIT_ASKPASS_MAIN", None)
     env["GIT_TERMINAL_PROMPT"] = "0"
-    subprocess.run(
-        ["git", "clone", "--depth=1", f"--branch={branch}", url, str(dest)],
-        check=True,
-        capture_output=True,
-        env=env,
-    )
-    result = subprocess.run(
-        ["git", "-C", str(dest), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
+
+    def git(*args: str, cwd: Path) -> str:
+        return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True, env=env).stdout.strip()
+
+    if clone is None:
+        clone = dest / "aws-cli"
+        subprocess.run(
+            ["git", "clone", "--depth=1", "--filter=blob:none", "--sparse", f"--branch={version}", AWS_CLI_URL, str(clone)],
+            check=True, capture_output=True, env=env,
+        )
+        git("sparse-checkout", "set", "awscli/botocore", cwd=clone)
+        root = clone / "awscli"
+    else:
+        archive = subprocess.run(
+            ["git", "-C", str(clone), "archive", f"{version}^{{commit}}", "awscli/botocore"],
+            capture_output=True, check=True, env=env,
+        ).stdout
+        subprocess.run(["tar", "-x", "-C", str(dest)], input=archive, check=True)
+        root = dest / "awscli"
+    sha = git("rev-parse", f"{version}^{{commit}}", cwd=clone)
+    date = git("log", "-1", "--format=%cs", sha, cwd=clone)
+    return root, sha, date
+
+
+def ingest(version: str, output: Path, clone: Path | None = None, quiet: bool = False) -> Path:
+    """Ingest one AWS CLI release into output/aws_cli_version=<version>/."""
+    say = (lambda *a: None) if quiet else print
+    with open(Path(__file__).parent.parent / "cli_customs.json") as f:
+        customs = json.load(f)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        say(f"Reading AWS CLI {version}...")
+        root, sha, date = export_aws_cli(version, Path(tmp), clone)
+        say(f"  ref: {sha}, released {date}")
+
+        operations = merge_cli_customs(extract_operations(root, gitref=sha), customs)
+        waiters = extract_waiters(root, gitref=sha)
+        regions = extract_regions(root)
+        xform_exceptions = extract_xform_exceptions(root, gitref=sha)
+        for row in operations + waiters + regions + xform_exceptions:
+            row["dam_effective_date"] = date
+        say(f"  {len(operations)} operations ({len([r for r in operations if r['is_cli_custom']])} CLI customs), "
+            f"{len(waiters)} waiters, {len(regions)} regions, {len(xform_exceptions)} name exceptions")
+
+        partition = write_parquet(
+            operations=operations,
+            waiters=waiters,
+            regions=regions,
+            output_dir=output,
+            aws_cli_version=version,
+            xform_exceptions=xform_exceptions,
+        )
+        say(f"  written to {partition}/")
+        return partition
 
 
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Ingest AWS API contract into datalake")
+    parser = argparse.ArgumentParser(description="Ingest the API contract of an AWS CLI v2 release into the datalake")
     parser.add_argument("--output", type=Path, default=Path("datalake/aws_api_catalog"))
+    parser.add_argument("--aws-cli-version", help="AWS CLI v2 release, for example 2.39.3. Default: the newest.")
+    parser.add_argument("--aws-cli-clone", type=Path, help="A full local clone of aws/aws-cli to read the release from.")
     args = parser.parse_args()
-
-    effective_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    customs_path = Path(__file__).parent.parent / "cli_customs.json"
-    with open(customs_path) as f:
-        customs = json.load(f)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-
-        # Clone botocore
-        botocore_dest = tmp_path / "botocore"
-        print("Cloning boto/botocore...")
-        botocore_ref = clone_repo("https://github.com/boto/botocore.git", "develop", botocore_dest)
-        print(f"  ref: {botocore_ref}")
-
-        # Extract
-        print("Extracting operations...")
-        operations = extract_operations(botocore_dest, gitref=botocore_ref)
-        operations = merge_cli_customs(operations, customs)
-        print(f"  {len(operations)} operations ({len([r for r in operations if r['is_cli_custom']])} CLI customs)")
-
-        print("Extracting waiters...")
-        waiters = extract_waiters(botocore_dest, gitref=botocore_ref)
-        print(f"  {len(waiters)} waiters")
-
-        print("Extracting regions...")
-        regions = extract_regions(botocore_dest)
-        print(f"  {len(regions)} regions")
-
-        print("Extracting CLI name exceptions...")
-        xform_exceptions = extract_xform_exceptions(botocore_dest, gitref=botocore_ref)
-        print(f"  {len(xform_exceptions)} exceptions")
-
-        # Write
-        print(f"Writing parquet to {args.output}/dam_effective_date={effective_date}/")
-        write_parquet(
-            operations=operations,
-            waiters=waiters,
-            regions=regions,
-            output_dir=args.output,
-            effective_date=effective_date,
-            xform_exceptions=xform_exceptions,
-        )
-        print("Done.")
+    ingest(args.aws_cli_version or aws_cli_versions()[-1], args.output, args.aws_cli_clone)
 
 
 def extract_operations(botocore_path: Path, gitref: str = "unknown") -> list[dict]:

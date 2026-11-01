@@ -103,10 +103,10 @@ def test_write_parquet(tmp_path):
         waiters=waiters,
         regions=regions,
         output_dir=output_dir,
-        effective_date="2026-04-01",
+        aws_cli_version="2.39.3",
     )
 
-    partition_dir = output_dir / "dam_effective_date=2026-04-01"
+    partition_dir = output_dir / "aws_cli_version=2.39.3"
     assert (partition_dir / "operations.parquet").exists()
     assert (partition_dir / "regions.parquet").exists()
 

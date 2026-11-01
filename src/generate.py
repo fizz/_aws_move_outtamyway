@@ -19,7 +19,7 @@ CREATE OR REPLACE MACRO botocore_kebab(name) AS lower(regexp_replace(regexp_repl
 """
 
 
-def define_cli_names(con: duckdb.DuckDBPyConnection, exceptions_glob: str | None = None, effective_date=None) -> None:
+def define_cli_names(con: duckdb.DuckDBPyConnection, exceptions_glob: str | None = None, aws_cli_version: str | None = None) -> None:
     """Define botocore_kebab() and the xform_exceptions table on a connection.
 
     xform_exceptions holds the names botocore spells out by hand (ingest reads them
@@ -33,33 +33,42 @@ def define_cli_names(con: duckdb.DuckDBPyConnection, exceptions_glob: str | None
             con.execute(
                 f"""INSERT INTO xform_exceptions
                     SELECT operation_name, cli_name FROM read_parquet('{exceptions_glob}', hive_partitioning=true)
-                    WHERE dam_effective_date = '{effective_date}'"""
+                    WHERE aws_cli_version = '{aws_cli_version}'"""
             )
         except duckdb.IOException:
             pass
 
 
-def load_catalog(datalake_path: Path) -> dict:
-    """Load the latest catalog partition from parquet via DuckDB."""
+def catalog_versions(datalake_path: Path) -> list[str]:
+    """The AWS CLI versions in the datalake, oldest first."""
+    versions = [d.name.split("=", 1)[1] for d in datalake_path.glob("aws_cli_version=*") if d.is_dir()]
+    return sorted(versions, key=lambda v: tuple(int(x) for x in v.split(".")))
+
+
+def load_catalog(datalake_path: Path, aws_cli_version: str | None = None) -> dict:
+    """Load one AWS CLI version from the datalake via DuckDB. Default: the newest."""
     con = duckdb.connect()
 
-    ops_glob = str(datalake_path / "dam_effective_date=*" / "operations.parquet")
-    waiters_glob = str(datalake_path / "dam_effective_date=*" / "waiters.parquet")
-    regions_glob = str(datalake_path / "dam_effective_date=*" / "regions.parquet")
-    exceptions_glob = str(datalake_path / "dam_effective_date=*" / "xform_exceptions.parquet")
+    ops_glob = str(datalake_path / "aws_cli_version=*" / "operations.parquet")
+    waiters_glob = str(datalake_path / "aws_cli_version=*" / "waiters.parquet")
+    regions_glob = str(datalake_path / "aws_cli_version=*" / "regions.parquet")
+    exceptions_glob = str(datalake_path / "aws_cli_version=*" / "xform_exceptions.parquet")
 
-    # Find latest effective date
-    dates = con.execute(
-        f"SELECT DISTINCT dam_effective_date FROM read_parquet('{ops_glob}', hive_partitioning=true) ORDER BY dam_effective_date DESC LIMIT 1"
-    ).fetchall()
-    effective_date = dates[0][0] if dates else "unknown"
-    define_cli_names(con, exceptions_glob, effective_date)
+    versions = catalog_versions(datalake_path)
+    version = aws_cli_version or (versions[-1] if versions else None)
+    if version not in versions:
+        raise SystemExit(f"AWS CLI {version} is not in {datalake_path}. Ingest it first.")
+    define_cli_names(con, exceptions_glob, version)
+    # The release date of that AWS CLI version.
+    effective_date = con.execute(
+        f"SELECT max(dam_effective_date) FROM read_parquet('{ops_glob}', hive_partitioning=true) WHERE aws_cli_version = '{version}'"
+    ).fetchone()[0]
 
     # Services
     services = sorted(
         r[0]
         for r in con.execute(
-            f"SELECT DISTINCT service_name FROM read_parquet('{ops_glob}', hive_partitioning=true) WHERE dam_effective_date = '{effective_date}'"
+            f"SELECT DISTINCT service_name FROM read_parquet('{ops_glob}', hive_partitioning=true) WHERE aws_cli_version = '{version}'"
         ).fetchall()
     )
 
@@ -72,7 +81,7 @@ def load_catalog(datalake_path: Path) -> dict:
                    END as cli_name
             FROM read_parquet('{ops_glob}', hive_partitioning=true) o
             LEFT JOIN xform_exceptions e ON e.operation_name = o.operation_name
-            WHERE o.dam_effective_date = '{effective_date}'
+            WHERE o.aws_cli_version = '{version}'
             ORDER BY o.service_name, cli_name"""
     ).fetchall()
     for svc, op in rows:
@@ -85,7 +94,7 @@ def load_catalog(datalake_path: Path) -> dict:
             f"""SELECT w.service_name, coalesce(e.cli_name, botocore_kebab(w.waiter_name)) as cli_name
                 FROM read_parquet('{waiters_glob}', hive_partitioning=true) w
                 LEFT JOIN xform_exceptions e ON e.operation_name = w.waiter_name
-                WHERE w.dam_effective_date = '{effective_date}'
+                WHERE w.aws_cli_version = '{version}'
                 ORDER BY w.service_name, cli_name"""
         ).fetchall()
         for svc, name in waiter_rows:
@@ -96,7 +105,7 @@ def load_catalog(datalake_path: Path) -> dict:
     # Regions
     try:
         region_rows = con.execute(
-            f"SELECT DISTINCT region_name FROM read_parquet('{regions_glob}', hive_partitioning=true) ORDER BY region_name"
+            f"SELECT DISTINCT region_name FROM read_parquet('{regions_glob}', hive_partitioning=true) WHERE aws_cli_version = '{version}' ORDER BY region_name"
         ).fetchall()
         regions = [r[0] for r in region_rows]
     except duckdb.IOException:
@@ -104,7 +113,7 @@ def load_catalog(datalake_path: Path) -> dict:
 
     # Gitref
     gitref_rows = con.execute(
-        f"SELECT DISTINCT dam_gitref FROM read_parquet('{ops_glob}', hive_partitioning=true) WHERE dam_effective_date = '{effective_date}' AND dam_gitref != 'local' LIMIT 1"
+        f"SELECT DISTINCT dam_gitref FROM read_parquet('{ops_glob}', hive_partitioning=true) WHERE aws_cli_version = '{version}' AND dam_gitref != 'local' AND dam_gitref IS NOT NULL LIMIT 1"
     ).fetchall()
     gitref = gitref_rows[0][0] if gitref_rows else "unknown"
 
@@ -115,6 +124,7 @@ def load_catalog(datalake_path: Path) -> dict:
         "service_operations": service_operations,
         "service_waiters": service_waiters,
         "regions": regions,
+        "aws_cli_version": version,
         "effective_date": effective_date,
         "gitref": gitref,
     }
@@ -132,7 +142,7 @@ def emit_zsh(catalog: dict) -> str:
     lines = []
     lines.append("# Generated by _aws_gen from damsight catalog")
     lines.append("# Not a compdef file — registered via explicit compdef in .zshrc")
-    lines.append(f"# Catalog date: {effective_date} | botocore ref: {gitref[:8]}")
+    lines.append(f"# AWS CLI {catalog['aws_cli_version']} | released {effective_date} | aws-cli ref: {gitref[:8]}")
     lines.append(f"# Services: {len(services)} | Operations: {sum(len(v) for v in service_ops.values())}")
     lines.append("")
 
@@ -236,7 +246,7 @@ def emit_bash(catalog: dict) -> str:
     lines = []
     lines.append("# Generated by _aws_gen from damsight catalog")
     lines.append("# Bash 4+ completion for the aws CLI")
-    lines.append(f"# Catalog date: {effective_date} | botocore ref: {gitref[:8]}")
+    lines.append(f"# AWS CLI {catalog['aws_cli_version']} | released {effective_date} | aws-cli ref: {gitref[:8]}")
     lines.append(f"# Services: {len(services)} | Operations: {sum(len(v) for v in service_ops.values())}")
     lines.append("")
 
@@ -355,10 +365,12 @@ def main():
     parser.add_argument("--datalake", type=Path, default=Path("datalake/aws_api_catalog"))
     parser.add_argument("--output", type=Path, default=Path("_aws_move_outtamyway"))
     parser.add_argument("--output-bash", type=Path, default=None)
+    parser.add_argument("--aws-cli-version", help="AWS CLI version to generate. Default: the newest in the datalake.")
     args = parser.parse_args()
 
     print(f"Loading catalog from {args.datalake}...")
-    catalog = load_catalog(args.datalake)
+    catalog = load_catalog(args.datalake, args.aws_cli_version)
+    print(f"  AWS CLI {catalog['aws_cli_version']}, released {catalog['effective_date']}")
     print(f"  {len(catalog['services'])} services, {sum(len(v) for v in catalog['service_operations'].values())} operations")
     print(f"  {sum(len(v) for v in catalog['service_waiters'].values())} waiters, {len(catalog['regions'])} regions")
 

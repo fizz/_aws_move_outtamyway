@@ -6,14 +6,14 @@ def make_test_datalake(tmp_path: Path) -> Path:
     """Create a minimal datalake with parquet files."""
     con = duckdb.connect()
 
-    partition = tmp_path / "dam_effective_date=2026-04-01"
+    partition = tmp_path / "aws_cli_version=2.39.3"
     partition.mkdir(parents=True)
 
     ops = [
-        {"service_name": "s3", "operation_name": "ListBuckets", "is_cli_custom": False, "dam_file_path": "x", "dam_gitref": "abc"},
-        {"service_name": "s3", "operation_name": "PutObject", "is_cli_custom": False, "dam_file_path": "x", "dam_gitref": "abc"},
-        {"service_name": "s3", "operation_name": "cp", "is_cli_custom": True, "dam_file_path": "cli_customs.json", "dam_gitref": "local"},
-        {"service_name": "sts", "operation_name": "AssumeRole", "is_cli_custom": False, "dam_file_path": "y", "dam_gitref": "abc"},
+        {"service_name": "s3", "operation_name": "ListBuckets", "is_cli_custom": False, "dam_file_path": "x", "dam_gitref": "abc", "dam_effective_date": "2026-10-30"},
+        {"service_name": "s3", "operation_name": "PutObject", "is_cli_custom": False, "dam_file_path": "x", "dam_gitref": "abc", "dam_effective_date": "2026-10-30"},
+        {"service_name": "s3", "operation_name": "cp", "is_cli_custom": True, "dam_file_path": "cli_customs.json", "dam_gitref": "local", "dam_effective_date": "2026-10-30"},
+        {"service_name": "sts", "operation_name": "AssumeRole", "is_cli_custom": False, "dam_file_path": "y", "dam_gitref": "abc", "dam_effective_date": "2026-10-30"},
     ]
     import json, tempfile, os
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -22,7 +22,7 @@ def make_test_datalake(tmp_path: Path) -> Path:
     con.execute(f"COPY (SELECT * FROM read_json('{ops_path}')) TO '{partition}/operations.parquet' (FORMAT PARQUET)")
 
     waiters = [
-        {"service_name": "s3", "waiter_name": "BucketExists", "dam_file_path": "z", "dam_gitref": "abc"},
+        {"service_name": "s3", "waiter_name": "BucketExists", "dam_file_path": "z", "dam_gitref": "abc", "dam_effective_date": "2026-10-30"},
     ]
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(waiters, f)
@@ -30,8 +30,8 @@ def make_test_datalake(tmp_path: Path) -> Path:
     con.execute(f"COPY (SELECT * FROM read_json('{w_path}')) TO '{partition}/waiters.parquet' (FORMAT PARQUET)")
 
     regions = [
-        {"region_name": "us-east-1", "partition": "aws"},
-        {"region_name": "us-gov-west-1", "partition": "aws-us-gov"},
+        {"region_name": "us-east-1", "partition": "aws", "dam_effective_date": "2026-10-30"},
+        {"region_name": "us-gov-west-1", "partition": "aws-us-gov", "dam_effective_date": "2026-10-30"},
     ]
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(regions, f)
@@ -52,7 +52,8 @@ def test_load_catalog(tmp_path):
 
     assert "s3" in catalog["services"]
     assert "sts" in catalog["services"]
-    # Operations should be kebab-case (non-customs transformed by inflector)
+    assert catalog["aws_cli_version"] == "2.39.3"
+    # Operations get their CLI names; CLI customs stay as they are
     s3_ops = catalog["service_operations"]["s3"]
     assert "list-buckets" in s3_ops
     assert "put-object" in s3_ops
@@ -83,6 +84,8 @@ def test_emit_zsh(tmp_path):
     # Must contain profile logic with sed (not grep -oP)
     assert "sed" in output
     assert "grep -oP" not in output
+    # Names the AWS CLI version it was generated from
+    assert "# AWS CLI 2.39.3 | released 2026-10-30 | aws-cli ref: abc" in output
     # Must end with function call
     assert output.strip().endswith('_aws_move_outtamyway "$@"')
     # Must have wait subcommand for services with waiters
@@ -113,3 +116,14 @@ def test_emit_bash(tmp_path):
     assert "declare -gA" in output or "declare -A" in output
     # Must contain wait handling
     assert "wait" in output
+
+
+def test_newest_version_is_compared_as_numbers(tmp_path):
+    import shutil
+    from src.generate import catalog_versions, load_catalog
+    datalake = make_test_datalake(tmp_path)
+    shutil.copytree(datalake / "aws_cli_version=2.39.3", datalake / "aws_cli_version=2.9.0")
+    shutil.copytree(datalake / "aws_cli_version=2.39.3", datalake / "aws_cli_version=2.100.0")
+    assert catalog_versions(datalake) == ["2.9.0", "2.39.3", "2.100.0"]
+    assert load_catalog(datalake)["aws_cli_version"] == "2.100.0"
+    assert load_catalog(datalake, "2.9.0")["aws_cli_version"] == "2.9.0"

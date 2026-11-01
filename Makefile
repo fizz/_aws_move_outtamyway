@@ -1,14 +1,15 @@
 DATALAKE ?= datalake/aws_api_catalog
+# VERSION: an AWS CLI v2 release, for example VERSION=2.39.3. Default: the newest.
 FPATH_DIR ?= ~/.zsh/completions
 BASH_COMP_DIR ?= ~/.bash_completion.d
 
 .PHONY: ingest generate install test changelog clean
 
 ingest:
-	uv run python src/ingest.py --output $(DATALAKE)
+	uv run python src/ingest.py --output $(DATALAKE) $(if $(VERSION),--aws-cli-version $(VERSION))
 
 generate: $(DATALAKE)
-	uv run python src/generate.py --datalake $(DATALAKE) --output _aws_move_outtamyway --output-bash _aws_move_outtamyway.bash
+	uv run python src/generate.py --datalake $(DATALAKE) --output _aws_move_outtamyway --output-bash _aws_move_outtamyway.bash $(if $(VERSION),--aws-cli-version $(VERSION))
 
 install: _aws_move_outtamyway _aws_move_outtamyway.bash
 	mkdir -p $(FPATH_DIR)
