@@ -4,7 +4,7 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "aws-move-outtamyway"
-version = "0.1.0"
+version = "2.39.3"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
